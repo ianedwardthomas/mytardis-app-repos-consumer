@@ -1,0 +1,36 @@
+    <mets PROFILE="Scientific Dataset Profile 1.0" xmlns="http://www.loc.gov/METS/" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.loc.gov/METS/ http://www.loc.gov/standards/mets/mets.xsd" LABEL="" TYPE="study" OBJID="A-1" xsi:type="mets">
+        <metsHdr CREATEDATE="2012-11-27T13:53:28" LASTMODDATE="2012-11-27T13:53:28">
+            <agent TYPE="ORGANIZATION" ROLE="DISSEMINATOR">
+                <name>Monash University</name>
+            </agent>
+            <agent TYPE="OTHER" ROLE="CREATOR">
+                <name>METS Exporter 0.1</name>
+            </agent>
+        </metsHdr>
+        <dmdSec ID="E-1">
+            <mdWrap MDTYPE="MODS">
+                <xmlData><mods:mods xmlns:mods="http://www.loc.gov/mods/v3"><mods:titleInfo><mods:title>test1</mods:title></mods:titleInfo><mods:genre>experiment</mods:genre><mods:relatedItem type="otherVersion"><mods:originInfo><mods:publisher>Primary Citation</mods:publisher></mods:originInfo><mods:location /></mods:relatedItem><mods:abstract>this is the description</mods:abstract><mods:name type="personal"><mods:namePart>Author1</mods:namePart><mods:role><mods:roleTerm type="text">author</mods:roleTerm></mods:role></mods:name><mods:name type="personal"><mods:namePart>Author2</mods:namePart><mods:role><mods:roleTerm type="text">author</mods:roleTerm></mods:role></mods:name></mods:mods></xmlData>
+            </mdWrap>
+        </dmdSec>
+        <dmdSec ID="D-1">
+            <mdWrap MDTYPE="MODS">
+                <xmlData><mods:mods xmlns:mods="http://www.loc.gov/mods/v3"><mods:titleInfo><mods:title>ds1</mods:title></mods:titleInfo></mods:mods></xmlData>
+            </mdWrap>
+        </dmdSec>
+        <amdSec>
+            <techMD ID="A-1">
+                <mdWrap OTHERMDTYPE="TARDISEXPERIMENT" MDTYPE="OTHER"/>
+            </techMD>
+            <techMD ID="A-2">
+                <mdWrap OTHERMDTYPE="TARDISDATASET" MDTYPE="OTHER"/>
+            </techMD>
+        </amdSec>
+        <fileSec>
+            <fileGrp USE="original"/>
+        </fileSec>
+        <structMap TYPE="logical">
+            <div ADMID="A-1" TYPE="investigation" DMDID="E-1">
+                <div ADMID="A-2" TYPE="dataset" DMDID="D-1"/>
+            </div>
+        </structMap>
+    </mets>
