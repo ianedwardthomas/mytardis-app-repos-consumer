@@ -106,12 +106,13 @@ def _get_or_create_user(source, user_id):
     return found_user
 
 
-
+#@task(name="foobar.hello", ignore_result=True)
 @task(name="reposconsumer.transfer_experiments", ignore_result=True)
 def transfer_experiment(source):
     """
     Pull public experiments from source into current repos
     """
+    print ("hello from experiment")
 
     #import nose.tools
     #nose.tools.set_trace()

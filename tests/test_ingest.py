@@ -107,45 +107,122 @@ class TransferExpTest(TestCase):
     def setUp(self):
         self._client = Client()
 
-    def test_simple(self):
+    # def test_simple(self):
+    #     """
+    #     This is an initial test of a basic consumption of service
+    #     """
+    #     from oaipmh.client import Client
+    #     from tardis.apps.reposconsumer import tasks
+
+    #     user1, user2, exp = _create_test_data()
+    #     # fake the OAIPMH connections
+    #     identify_fake = flexmock(identify=lambda: identify_fake1)
+    #     identify_fake1 = flexmock(baseURL=lambda:
+    #         "http://127.0.0.1:9000/apps/oaimph")
+    #     metadata_fake = flexmock()
+    #     metadata_fake.should_receive('getField') \
+    #         .and_return([str(exp.id)]) \
+    #         .and_return([str(user1.id)])
+    #     list_records_fake = flexmock(
+    #         listRecords=lambda metadataPrefix: [({}, metadata_fake, {})])
+    #     flexmock(Client).new_instances(identify_fake, list_records_fake)
+
+    #     # fake the urllib2 based connections and the mets pull
+    #     filename = path.join(path.abspath(path.dirname(__file__)), 'mets.xml')
+    #     metsdata = open(filename, 'r').read()
+    #     flexmock(tasks).should_receive('getURL') \
+    #         .and_return('{"username":"%s","first_name":"%s"\
+    #                 ,"last_name":"%s","email":"%s"}' %
+    #             (user1.username, user1.first_name, user1.last_name,
+    #              user1.email)) \
+    #         .and_return(str(Experiment. PUBLIC_ACCESS_FULL)) \
+    #         .and_return('[{"pluginId":"django_user","isOwner":true,\
+    #             "entityId":"1"}]') \
+    #         .and_return('{"username":"%s","first_name":"%s"\
+    #             ,"last_name":"%s","email":"%s"}' %
+    #             (user1.username, user1.first_name, user1.last_name,
+    #              user1.email)) \
+    #         .and_return(metsdata)
+
+    #     from tardis.apps.reposconsumer.tasks import transfer_experiment
+    #     local_ids = transfer_experiment("http://127.0.0.1:9000")
+    #     #TODO: pull experiment at local_id and compare to original exp
+    #     self.assertTrue(len(local_ids) == 1)
+    #     for local_id in local_ids:
+    #         self.assertTrue(int(local_id) > 0)
+
+
+    def test_simple_alt(self):
         """
         This is an initial test of a basic consumption of service
         """
         from oaipmh.client import Client
         from tardis.apps.reposconsumer import tasks
+        source = "http://127.0.0.1:9000"
 
         user1, user2, exp = _create_test_data()
         # fake the OAIPMH connections
-        identify_fake = flexmock(identify=lambda: identify_fake1)
+        #identify_fake = flexmock(identify=lambda: identify_fake1)
         identify_fake1 = flexmock(baseURL=lambda:
             "http://127.0.0.1:9000/apps/oaimph")
         metadata_fake = flexmock()
+
         metadata_fake.should_receive('getField') \
-            .and_return([str(exp.id)]) \
+            .with_args('identifier') \
+            .and_return([str(exp.id)])
+
+        metadata_fake.should_receive('getField') \
+            .with_args('creator') \
             .and_return([str(user1.id)])
-        list_records_fake = flexmock(
-            listRecords=lambda metadataPrefix: [({}, metadata_fake, {})])
-        flexmock(Client).new_instances(identify_fake, list_records_fake)
+
+        # metadata_fake.should_receive('getField') \
+        #     .and_return([str(exp.id)]) \
+        #     .and_return([str(user1.id)])
+        # list_records_fake = flexmock(
+            # listRecords=lambda metadataPrefix: [({}, metadata_fake, {})])
+        # flexmock(Client).new_instances(identify_fake, list_records_fake)
+
+        fake = flexmock(identify=lambda: identify_fake1,
+                        baseURL=lambda: "%s/apps/oaipmh" % source,
+                        listRecords=lambda metadataPrefix:
+                             [({}, metadata_fake, {})])
+        flexmock(Client).new_instances(fake)
 
         # fake the urllib2 based connections and the mets pull
         filename = path.join(path.abspath(path.dirname(__file__)), 'mets.xml')
         metsdata = open(filename, 'r').read()
-        flexmock(tasks).should_receive('getURL') \
-            .and_return('{"username":"%s","first_name":"%s"\
+
+        flexmock(tasks).should_receive('getURL').with_args(
+            "%s/apps/reposproducer/user/%s/" % (source, user1.id)) \
+                .and_return('{"username":"%s","first_name":"%s" \
                     ,"last_name":"%s","email":"%s"}' %
                 (user1.username, user1.first_name, user1.last_name,
-                 user1.email)) \
-            .and_return(str(Experiment. PUBLIC_ACCESS_FULL)) \
-            .and_return('[{"pluginId":"django_user","isOwner":true,\
-                "entityId":"1"}]') \
-            .and_return('{"username":"%s","first_name":"%s"\
+                 user1.email))
+
+        flexmock(tasks).should_receive('getURL').with_args(
+            "%s/apps/reposproducer/expstate/%s/"
+            % (source, exp.id)) \
+            .and_return(str(Experiment. PUBLIC_ACCESS_FULL))
+
+        flexmock(tasks).should_receive('getURL').with_args(
+            "%s/apps/reposproducer/acls/%s/" % (source, exp.id)) \
+                .and_return('[{"pluginId":"django_user","isOwner":true,\
+                "entityId":"1"},{"pluginId":"django_user","isOwner":true,\
+                "entityId":"2"}]')
+
+        flexmock(tasks).should_receive('getURL').with_args(
+            "%s/apps/reposproducer/user/%s/" % (source, user2.id)) \
+           .and_return('{"username":"%s","first_name":"%s"\
                 ,"last_name":"%s","email":"%s"}' %
-                (user1.username, user1.first_name, user1.last_name,
-                 user1.email)) \
+                (user2.username, user2.first_name, user2.last_name,
+                 user2.email))
+
+        flexmock(tasks).should_receive('getURL').with_args(
+            "%s/experiment/metsexport/%s/" % (source, exp.id)) \
             .and_return(metsdata)
 
         from tardis.apps.reposconsumer.tasks import transfer_experiment
-        local_ids = transfer_experiment("http://127.0.0.1:9000")
+        local_ids = transfer_experiment(source)
         #TODO: pull experiment at local_id and compare to original exp
         self.assertTrue(len(local_ids) == 1)
         for local_id in local_ids:
