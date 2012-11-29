@@ -67,6 +67,8 @@ from django.conf import settings
 from tardis.tardis_portal.auth import auth_service
 from tardis.tardis_portal.auth.localdb_auth import django_user, django_group
 
+from django.core.urlresolvers import reverse
+
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +94,7 @@ def _get_or_create_user(source, user_id):
     # FIXME: check for fail
     user_profile = json.loads(xmldata)
     # FIXME: check for fail
-    # assume that usernames are unique
+    # assume that a person username is same across all nodes in BDP
     found_user = User.objects.get(username=user_profile['username'])
     if not found_user:
         # FIXME: should new user have same id as original?
@@ -112,13 +114,11 @@ def transfer_experiment(source):
     """
     Pull public experiments from source into current repos
     """
-    print ("hello from experiment")
 
-    #import nose.tools
-    #nose.tools.set_trace()
 
     # Check identity of the feed
     from oaipmh.client import Client
+    from oaipmh import error
     from oaipmh.metadata import MetadataRegistry, oai_dc_reader
     registry = MetadataRegistry()
     registry.registerReader('oai_dc', oai_dc_reader)
@@ -148,6 +148,9 @@ def transfer_experiment(source):
             in client.listRecords(metadataPrefix='oai_dc')]
     except AttributeError as e:
         logger.exception("error reading experiment %s" % e)
+        return
+    except error.NoRecordsMatchError as e:
+        logger.warn("no public records found %s" % e)
         return
 
     local_ids = []
@@ -200,6 +203,8 @@ def transfer_experiment(source):
         # Get the METS for the experiment
         metsxml = ""
         try:
+            #metsxml = getURL("%s/experiment/metsexport/%s/?force_http_urls"
+            #% (source, exp_id))
             metsxml = getURL("%s/experiment/metsexport/%s/"
             % (source, exp_id))
 
@@ -214,7 +219,8 @@ def transfer_experiment(source):
             title='Placeholder Title',
             approved=True,
             created_by=found_user,
-            public_access=exp_state
+            public_access=exp_state,
+            locked=False # so experiment can then be altered.
             )
         e.save()
         local_id = e.id
@@ -225,8 +231,9 @@ def transfer_experiment(source):
         f.close()
 
         # Ingest this experiment META data and isOwner ACLS
+        eid = None
         try:
-            _, sync_path = _registerExperimentDocument(filename=filename,
+            eid, sync_path = _registerExperimentDocument(filename=filename,
                                                created_by=found_user,
                                                expid=local_id,
                                                owners=owners)
@@ -235,6 +242,18 @@ def transfer_experiment(source):
             logger.exception('=== processing experiment %s: FAILED!'
                 % local_id)
             return
+
+        #import nose.tools
+        #nose.tools.set_trace()
+
+        exp = Experiment.objects.get(id=eid)
+
+        # FIXME: reverse lookup of URLs seem quite slow.
+        # TODO: put this information into specific metadata schema attached to experiment
+        view, _, _ = exp.get_absolute_url()
+        exp.description += "\nOriginally from %s%s\n"  \
+        % (source, reverse(view, args=(exp_id,)))
+        exp.save()
 
         local_ids.append(local_id)
     return local_ids

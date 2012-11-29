@@ -218,7 +218,7 @@ class TransferExpTest(TestCase):
                  user2.email))
 
         flexmock(tasks).should_receive('getURL').with_args(
-            "%s/experiment/metsexport/%s/" % (source, exp.id)) \
+            "%s/experiment/metsexport/%s?force_http_urls" % (source, exp.id)) \
             .and_return(metsdata)
 
         from tardis.apps.reposconsumer.tasks import transfer_experiment
