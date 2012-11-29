@@ -123,12 +123,19 @@ def transfer_experiment(source):
     registry = MetadataRegistry()
     registry.registerReader('oai_dc', oai_dc_reader)
     source_url = "%s/apps/oaipmh/?verb=Identify" % source
+    #import nose.tools
+    #nose.tools.set_trace()
     client = Client(source_url, registry)
     try:
         identify = client.identify()
-    except AttributeError:
+    except AttributeError as e:
         logger.exception("error reading repos identity")
-        return
+        raise e
+    except error.ErrorBase as e:
+        logger.exception("OAIPMH.error")
+        raise e
+    except URLError as e:
+        raise e
 
     repos = identify.baseURL()
     import urlparse
@@ -177,7 +184,6 @@ def transfer_experiment(source):
             logger.error('=== processing experiment %s: FAILED!' % exp_id)
             raise e
 
-
         # Get the usernames of isOwner django_user ACLs for the experiment
         try:
             xmldata = getURL("%s/apps/reposproducer/acls/%s/"
@@ -203,14 +209,19 @@ def transfer_experiment(source):
         # Get the METS for the experiment
         metsxml = ""
         try:
-            #metsxml = getURL("%s/experiment/metsexport/%s/?force_http_urls"
-            #% (source, exp_id))
-            metsxml = getURL("%s/experiment/metsexport/%s/"
+            metsxml = getURL("%s/experiment/metsexport/%s/?force_http_urls"
             % (source, exp_id))
+            #metsxml = getURL("%s/experiment/metsexport/%s/"
+            #% (source, exp_id))
 
         except HTTPError as e:
             logger.error(e.read())
             raise e
+
+
+        # TODO: Need someway of updating and existing experiment.  Problem is
+        # that copy will have different id from original, so need unique identifier
+        # to allow matching
 
         #import nose.tools
         #nose.tools.set_trace()
@@ -243,16 +254,15 @@ def transfer_experiment(source):
                 % local_id)
             return
 
-        #import nose.tools
-        #nose.tools.set_trace()
+
 
         exp = Experiment.objects.get(id=eid)
 
         # FIXME: reverse lookup of URLs seem quite slow.
         # TODO: put this information into specific metadata schema attached to experiment
-        view, _, _ = exp.get_absolute_url()
         exp.description += "\nOriginally from %s%s\n"  \
-        % (source, reverse(view, args=(exp_id,)))
+        % (source, reverse("tardis.tardis_portal.views.view_experiment",
+             args=(exp_id,)))
         exp.save()
 
         local_ids.append(local_id)

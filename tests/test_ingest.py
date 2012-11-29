@@ -102,6 +102,10 @@ from django.test import TestCase
 from django.test.client import Client
 
 
+from oaipmh.client import Client as oaipmhclient
+from tardis.apps.reposconsumer import tasks
+
+
 class TransferExpTest(TestCase):
 
     def setUp(self):
@@ -152,13 +156,9 @@ class TransferExpTest(TestCase):
     #         self.assertTrue(int(local_id) > 0)
 
 
-    def test_simple_alt(self):
-        """
-        This is an initial test of a basic consumption of service
-        """
-        from oaipmh.client import Client
-        from tardis.apps.reposconsumer import tasks
-        source = "http://127.0.0.1:9000"
+    def _setup_mocks(self,source):
+
+
 
         user1, user2, exp = _create_test_data()
         # fake the OAIPMH connections
@@ -175,18 +175,12 @@ class TransferExpTest(TestCase):
             .with_args('creator') \
             .and_return([str(user1.id)])
 
-        # metadata_fake.should_receive('getField') \
-        #     .and_return([str(exp.id)]) \
-        #     .and_return([str(user1.id)])
-        # list_records_fake = flexmock(
-            # listRecords=lambda metadataPrefix: [({}, metadata_fake, {})])
-        # flexmock(Client).new_instances(identify_fake, list_records_fake)
 
         fake = flexmock(identify=lambda: identify_fake1,
                         baseURL=lambda: "%s/apps/oaipmh" % source,
                         listRecords=lambda metadataPrefix:
                              [({}, metadata_fake, {})])
-        flexmock(Client).new_instances(fake)
+        flexmock(oaipmhclient).new_instances(fake)
 
         # fake the urllib2 based connections and the mets pull
         filename = path.join(path.abspath(path.dirname(__file__)), 'mets.xml')
@@ -218,12 +212,54 @@ class TransferExpTest(TestCase):
                  user2.email))
 
         flexmock(tasks).should_receive('getURL').with_args(
-            "%s/experiment/metsexport/%s?force_http_urls" % (source, exp.id)) \
+            "%s/experiment/metsexport/%s/?force_http_urls" % (source, exp.id)) \
             .and_return(metsdata)
+
+
+
+
+    def test_correct_run(self):
+        """
+        This is an initial test of a basic consumption of service
+        """
+        source = "http://127.0.0.1:9000"
+        self._setup_mocks(source)
 
         from tardis.apps.reposconsumer.tasks import transfer_experiment
         local_ids = transfer_experiment(source)
+
         #TODO: pull experiment at local_id and compare to original exp
         self.assertTrue(len(local_ids) == 1)
         for local_id in local_ids:
             self.assertTrue(int(local_id) > 0)
+
+    def test_no_repos(self):
+        """Connection to a non-existence repository
+        """
+        source = "http://127.0.0.1:9000"
+        self._setup_mocks(source)
+
+        from oaipmh.error import IdDoesNotExistError
+
+        # Needed as can't throw exceptions in lambdas
+        class AttributeErrorFake:
+            def __init__(self):
+                raise AttributeError
+
+        class IdDoesNotExistErrorFake:
+            def __init__(self):
+                raise IdDoesNotExistError
+
+        fake = flexmock(identify=IdDoesNotExistErrorFake)
+        flexmock(oaipmhclient).new_instances(fake)
+        #fake = flexmock().should_receive('identify').and_return("99").and_raise(AttributeError)
+        #flexmock(Client).new_instances(fake)
+
+        from tardis.apps.reposconsumer.tasks import transfer_experiment
+        try:
+            transfer_experiment(source)
+        except IdDoesNotExistError:
+            pass
+        else:
+            self.AssertTrue(False,"Expected IdDoesNotExistError")
+
