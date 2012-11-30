@@ -78,15 +78,22 @@ def _get_or_create_user(source, user_id):
         xmldata = getURL("%s/apps/reposproducer/user/%s/"
             % (source, user_id))
     except HTTPError as e:
+        logger.exception("error getting user information")
         logger.error(e.read())
         raise e
-    # FIXME: check for fail
-    user_profile = json.loads(xmldata)
-    # FIXME: check for fail
+    try:
+        user_profile = json.loads(xmldata)
+    except ValueError as e:
+        logger.error(e.read())
+        logger.exception("cannot parse user information.")
+        raise e
     # NOTE: we assume that a person username is same across all nodes in BDP
+    # FIXME: should new user have same id as original?
     found_user = User.objects.get(username=user_profile['username'])
     if not found_user:
-        # FIXME: should new user have same id as original?
+        #FIXME: If there is a exception with readingfeeds, oaipmh from source,
+        # then may end up with redundant users here.  Solution is to check for existing users,
+        # and then create later once all source data has been fetched.
         user1 = User(username=user_profile['username'],
             first_name=user_profile['first_name'],
             last_name=user_profile['last_name'],
@@ -94,16 +101,14 @@ def _get_or_create_user(source, user_id):
         user1.save()
         UserProfile(user=user1).save()
         found_user = user1
-        #FIXME: if there is a problem with feeds, oaipmh to source, then may
-        # end up with redundant users here.  Need to delete any of these
-        # if this happens
+
     return found_user
 
 
-@task(name="reposconsumer.transfer_experiments", ignore_result=True)
+@task(name="reposconsumer.consume_experiments", ignore_result=True)
 def transfer_experiment(source):
     """
-    Pull public experiments from source into current repos
+    Pull public experiments from source into current mytardis.
     """
 
     #TODO: Cleanup error messages
@@ -221,6 +226,9 @@ def transfer_experiment(source):
         # that copy will have different id from original, so need unique identifier
         # to allow matching
 
+        # We have not pulled everything we need from producer and are ready to create
+        # experiment.
+
         # Make placeholder experiment and ready metadata
         e = Experiment(
             title='Placeholder Title',
@@ -252,7 +260,7 @@ def transfer_experiment(source):
 
         exp = Experiment.objects.get(id=eid)
 
-        # so that tardis does not to copy the data
+        # so that tardis does not copy the data
         for datafile in exp.get_datafiles():
             datafile.stay_remote = True
             datafile.save()
