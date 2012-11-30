@@ -42,35 +42,24 @@ from os import path
 import logging
 import json
 
-from tardis.tardis_portal.models import Experiment, ExperimentParameter, \
-    DatafileParameter, DatasetParameter, ExperimentACL, Dataset_File, \
-    DatafileParameterSet, ParameterName, GroupAdmin, Schema, \
-    Dataset, ExperimentParameterSet, DatasetParameterSet, \
-    License, UserProfile, UserAuthentication, Token
+from tardis.tardis_portal.models import Experiment, ExperimentACL, \
+     UserProfile
 
 from urllib2 import Request, urlopen, URLError, HTTPError
 
-from django.http import HttpResponse
-from django.template import Context, loader
-
-from tardis.tardis_portal.shortcuts import render_response_index, \
-    return_response_error, return_response_not_found, \
-    render_response_search, get_experiment_referer
-
-from django.contrib.auth.models import User, Group, AnonymousUser
+from django.contrib.auth.models import User
 from tardis.tardis_portal.metsparser import parseMets
 
 
 from django.db import transaction
 from tardis.tardis_portal.ProcessExperiment import ProcessExperiment
-from django.conf import settings
 from tardis.tardis_portal.auth import auth_service
-from tardis.tardis_portal.auth.localdb_auth import django_user, django_group
+from tardis.tardis_portal.auth.localdb_auth import django_user
 
 from django.core.urlresolvers import reverse
 
-
 logger = logging.getLogger(__name__)
+
 
 def getURL(source):
     request = Request(source, {}, {})
@@ -78,12 +67,12 @@ def getURL(source):
     xmldata = response.read()
     return xmldata
 
+
 def _get_or_create_user(source, user_id):
     """
     Retrieves information about the user_id at the source
     and creates equivalent record here
     """
-
     # get the founduser
     try:
         xmldata = getURL("%s/apps/reposproducer/user/%s/"
@@ -94,7 +83,7 @@ def _get_or_create_user(source, user_id):
     # FIXME: check for fail
     user_profile = json.loads(xmldata)
     # FIXME: check for fail
-    # assume that a person username is same across all nodes in BDP
+    # NOTE: we assume that a person username is same across all nodes in BDP
     found_user = User.objects.get(username=user_profile['username'])
     if not found_user:
         # FIXME: should new user have same id as original?
@@ -105,17 +94,20 @@ def _get_or_create_user(source, user_id):
         user1.save()
         UserProfile(user=user1).save()
         found_user = user1
+        #FIXME: if there is a problem with feeds, oaipmh to source, then may
+        # end up with redundant users here.  Need to delete any of these
+        # if this happens
     return found_user
 
 
-#@task(name="foobar.hello", ignore_result=True)
 @task(name="reposconsumer.transfer_experiments", ignore_result=True)
 def transfer_experiment(source):
     """
     Pull public experiments from source into current repos
     """
 
-
+    #TODO: Cleanup error messages
+    #NOTE: As this is a pull we trust the data from the other tardis
     # Check identity of the feed
     from oaipmh.client import Client
     from oaipmh import error
@@ -135,6 +127,7 @@ def transfer_experiment(source):
         logger.exception("OAIPMH.error")
         raise e
     except URLError as e:
+        logger.exception("url access error ")
         raise e
 
     repos = identify.baseURL()
@@ -142,7 +135,8 @@ def transfer_experiment(source):
     repos_url = urlparse.urlparse(repos)
     if "%s://%s" % (repos_url.scheme, repos_url.netloc) != source:
         # In deployment, this should throw exception
-        logger.warn("Source directory reports incorrect name")
+        logger.exception("Source directory reports incorrect name")
+        raise AttributeError
 
     # Get list of public experiments at source
     registry = MetadataRegistry()
@@ -155,7 +149,7 @@ def transfer_experiment(source):
             in client.listRecords(metadataPrefix='oai_dc')]
     except AttributeError as e:
         logger.exception("error reading experiment %s" % e)
-        return
+        raise e
     except error.NoRecordsMatchError as e:
         logger.warn("no public records found %s" % e)
         return
@@ -173,11 +167,13 @@ def transfer_experiment(source):
             % (source, exp_id))
         except HTTPError as e:
             logger.error(e.read())
+            logger.exception("cannot get public state of experiment %s" % exp_id)
             raise e
         try:
             exp_state = json.loads(xmldata)
         except ValueError as e:
             logger.error(e.read())
+            logger.exception("cannot parse public state of experiment %s" % exp_id)
             raise e
         if not exp_state in [Experiment.PUBLIC_ACCESS_FULL,
                               Experiment.PUBLIC_ACCESS_METADATA]:
@@ -191,11 +187,13 @@ def transfer_experiment(source):
 
         except HTTPError as e:
             logger.error(e.read())
+            logger.exception("cannot get acl list of experiment %s" % exp_id)
             raise e
         try:
             acls = json.loads(xmldata)
         except ValueError as e:
             logger.error(e.read())
+            logger.exception("cannot parse acl list of experiment %s" % exp_id)
             raise e
         owners = []
         for acl in acls:
@@ -216,22 +214,20 @@ def transfer_experiment(source):
 
         except HTTPError as e:
             logger.error(e.read())
+            logger.exception("cannot get METS for experiment %s" % exp_id)
             raise e
-
 
         # TODO: Need someway of updating and existing experiment.  Problem is
         # that copy will have different id from original, so need unique identifier
         # to allow matching
 
-        #import nose.tools
-        #nose.tools.set_trace()
         # Make placeholder experiment and ready metadata
         e = Experiment(
             title='Placeholder Title',
             approved=True,
             created_by=found_user,
             public_access=exp_state,
-            locked=False # so experiment can then be altered.
+            locked=False  # so experiment can then be altered.
             )
         e.save()
         local_id = e.id
@@ -254,19 +250,28 @@ def transfer_experiment(source):
                 % local_id)
             return
 
-
-
         exp = Experiment.objects.get(id=eid)
 
+        # so that tardis does not to copy the data
+        for datafile in exp.get_datafiles():
+            datafile.stay_remote = True
+            datafile.save()
+
+        import nose.tools
+        nose.tools.set_trace()
         # FIXME: reverse lookup of URLs seem quite slow.
         # TODO: put this information into specific metadata schema attached to experiment
-        exp.description += "\nOriginally from %s%s\n"  \
-        % (source, reverse("tardis.tardis_portal.views.view_experiment",
-             args=(exp_id,)))
+        exp.description += get_audit_message(source, exp_id)
         exp.save()
 
         local_ids.append(local_id)
     return local_ids
+
+
+def get_audit_message(source, exp_id):
+    return "\nOriginally from %s%s\n"  \
+        % (source, reverse("tardis.tardis_portal.views.view_experiment",
+        args=(exp_id,)))
 
 
 # TODO removed username from arguments
