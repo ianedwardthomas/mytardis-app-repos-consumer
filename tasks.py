@@ -43,7 +43,8 @@ import logging
 import json
 
 from tardis.tardis_portal.models import Experiment, ExperimentACL, \
-     UserProfile
+     UserProfile, Schema, ParameterName, ExperimentParameter, \
+     ExperimentParameterSet
 
 from urllib2 import Request, urlopen, URLError, HTTPError
 
@@ -80,16 +81,21 @@ def _get_or_create_user(source, user_id):
     except HTTPError as e:
         logger.exception("error getting user information")
         logger.error(e.read())
-        raise e
+        return None
     try:
         user_profile = json.loads(xmldata)
     except ValueError as e:
         logger.error(e.read())
         logger.exception("cannot parse user information.")
-        raise e
+        return None
     # NOTE: we assume that a person username is same across all nodes in BDP
     # FIXME: should new user have same id as original?
-    found_user = User.objects.get(username=user_profile['username'])
+
+    found_user = None
+    try:
+        found_user = User.objects.get(username=user_profile['username'])
+    except User.DoesNotExist as e:
+        pass
     if not found_user:
         #FIXME: If there is a exception with readingfeeds, oaipmh from source,
         # then may end up with redundant users here.  Solution is to check for existing users,
@@ -114,26 +120,27 @@ def transfer_experiment(source):
     #TODO: Cleanup error messages
     #NOTE: As this is a pull we trust the data from the other tardis
     # Check identity of the feed
+
     from oaipmh.client import Client
     from oaipmh import error
     from oaipmh.metadata import MetadataRegistry, oai_dc_reader
+
     registry = MetadataRegistry()
     registry.registerReader('oai_dc', oai_dc_reader)
     source_url = "%s/apps/oaipmh/?verb=Identify" % source
-    #import nose.tools
-    #nose.tools.set_trace()
+
     client = Client(source_url, registry)
     try:
         identify = client.identify()
     except AttributeError as e:
         logger.exception("error reading repos identity")
-        raise e
+        return
     except error.ErrorBase as e:
         logger.exception("OAIPMH.error")
-        raise e
+        return
     except URLError as e:
-        logger.exception("url access error ")
-        raise e
+        logger.exception("url access error for %s" % source_url)
+        return
 
     repos = identify.baseURL()
     import urlparse
@@ -141,9 +148,8 @@ def transfer_experiment(source):
     if "%s://%s" % (repos_url.scheme, repos_url.netloc) != source:
         # In deployment, this should throw exception
         logger.exception("Source directory reports incorrect name")
-        raise AttributeError
-
-    # Get list of public experiments at source
+        return
+    # Get list of public experiments at sources
     registry = MetadataRegistry()
     registry.registerReader('oai_dc', oai_dc_reader)
     client = Client(source
@@ -154,7 +160,7 @@ def transfer_experiment(source):
             in client.listRecords(metadataPrefix='oai_dc')]
     except AttributeError as e:
         logger.exception("error reading experiment %s" % e)
-        raise e
+        return
     except error.NoRecordsMatchError as e:
         logger.warn("no public records found %s" % e)
         return
@@ -166,6 +172,7 @@ def transfer_experiment(source):
 
         found_user = _get_or_create_user(source, user)
 
+
         #make sure experiment is publicish
         try:
             xmldata = getURL("%s/apps/reposproducer/expstate/%s/"
@@ -173,17 +180,17 @@ def transfer_experiment(source):
         except HTTPError as e:
             logger.error(e.read())
             logger.exception("cannot get public state of experiment %s" % exp_id)
-            raise e
+            return
         try:
             exp_state = json.loads(xmldata)
         except ValueError as e:
             logger.error(e.read())
             logger.exception("cannot parse public state of experiment %s" % exp_id)
-            raise e
+            return
         if not exp_state in [Experiment.PUBLIC_ACCESS_FULL,
                               Experiment.PUBLIC_ACCESS_METADATA]:
             logger.error('=== processing experiment %s: FAILED!' % exp_id)
-            raise e
+            return
 
         # Get the usernames of isOwner django_user ACLs for the experiment
         try:
@@ -193,13 +200,13 @@ def transfer_experiment(source):
         except HTTPError as e:
             logger.error(e.read())
             logger.exception("cannot get acl list of experiment %s" % exp_id)
-            raise e
+            return
         try:
             acls = json.loads(xmldata)
         except ValueError as e:
             logger.error(e.read())
             logger.exception("cannot parse acl list of experiment %s" % exp_id)
-            raise e
+            return
         owners = []
         for acl in acls:
             if acl['pluginId'] == 'django_user' and acl['isOwner']:
@@ -208,6 +215,7 @@ def transfer_experiment(source):
             else:
                 # FIXME: skips all other types of acl for now
                 pass
+
 
         # Get the METS for the experiment
         metsxml = ""
@@ -220,7 +228,55 @@ def transfer_experiment(source):
         except HTTPError as e:
             logger.error(e.read())
             logger.exception("cannot get METS for experiment %s" % exp_id)
-            raise e
+            return
+
+
+
+        # load schema and parametername for experiment keys
+        try:
+            key_schema = Schema.objects.get(namespace=settings.KEY_NAMESPACE)
+        except Schema.DoesNotExist as e:
+            logger.exception("No ExperimentKeyService Schema found")
+            return
+
+        try:
+            key_name = ParameterName.objects.get(name=settings.KEY_NAME)
+        except ParameterName.DoesNotExist as e:
+            logger.exception("No ExperimentKeyService ParameterName found")
+            return
+
+        try:
+            xmldata = getURL("%s/apps/reposproducer/key/%s/"
+            % (source, exp_id))
+        except HTTPError as e:
+            logger.error(e.read())
+            logger.exception("cannot get key of experiment %s" % exp_id)
+            return
+        try:
+            key_value = json.loads(xmldata)
+        except ValueError as e:
+            logger.error(e.read())
+            logger.exception("cannot parse key list of experiment %s" % exp_id)
+            return
+
+        exps = Experiment.objects.all()
+
+        duplicate_exp = 0
+        for exp in exps:
+            params = ExperimentParameter.objects.filter(name=key_name,
+                                    parameterset__schema=key_schema,
+                                    parameterset__experiment=exp)
+            if params.count() >= 1:
+                key = params[0].string_value
+                if key == key_value:
+                    duplicate_exp = exp.id
+                    break
+
+        if duplicate_exp:
+            logger.warn("Found duplicate experiment form %s %s to %s"
+                % (source, exp_id, duplicate_exp))
+            return
+
 
         # TODO: Need someway of updating and existing experiment.  Problem is
         # that copy will have different id from original, so need unique identifier
@@ -258,6 +314,10 @@ def transfer_experiment(source):
                 % local_id)
             return
 
+
+        # FIXME: if METS parse fails then we should go back and delete the placeholder experiment
+
+
         exp = Experiment.objects.get(id=eid)
 
         # so that tardis does not copy the data
@@ -265,8 +325,17 @@ def transfer_experiment(source):
             datafile.stay_remote = True
             datafile.save()
 
-        import nose.tools
-        nose.tools.set_trace()
+        # store the key
+        eps, _ = ExperimentParameterSet.objects.\
+            get_or_create(experiment=exp, schema=key_schema)
+        ep = ExperimentParameter(parameterset=eps,
+            name=key_name,
+            string_value=key_value)
+        ep.save()
+
+
+        #import nose.tools
+        #nose.tools.set_trace()
         # FIXME: reverse lookup of URLs seem quite slow.
         # TODO: put this information into specific metadata schema attached to experiment
         exp.description += get_audit_message(source, exp_id)
@@ -277,9 +346,7 @@ def transfer_experiment(source):
 
 
 def get_audit_message(source, exp_id):
-    return "\nOriginally from %s%s\n"  \
-        % (source, reverse("tardis.tardis_portal.views.view_experiment",
-        args=(exp_id,)))
+    return "\nOriginally from %s/experiment/view/%s/\n" % (source, exp_id)
 
 
 # TODO removed username from arguments
