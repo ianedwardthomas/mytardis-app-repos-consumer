@@ -8,13 +8,13 @@ Hooks for MyTardis to ingest public experiments from other Mytardises
 Installation
 ------------
 
-Clone into the MyTardis ``APPS`` directory as normal
+Clone into the MyTardis ``APPS`` directory as ``reposconsumer``
+e.g., ``git clone https://github.com/ianedwardthomas/mytardis-app-repos-consumer reposconsumer``
 
 Configuring
 -----------
 
 Added to the settings.py CERLERY_IMPORTS.  For example::
-
 
     CELERY_IMPORTS = ("tardis.tardis_portal.tasks", "tardis.apps.reposconsumer.tasks" )
 
@@ -31,6 +31,8 @@ Added to task queue::
     }
 
 Where the argument of the source of the mytardis application experiment feed.
+
+*Important*: The set of schemas on the site must match those used by experiements to be ingested on the remote site.  This can be loaded via the admin tool, for example.
 
 Add application ``INSTALLED_APPS``.  For example::
 
