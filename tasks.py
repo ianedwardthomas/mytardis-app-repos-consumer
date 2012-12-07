@@ -321,12 +321,16 @@ def transfer_experiment(source):
         e.save()
 
         # store the key
-        eps, _ = ExperimentParameterSet.objects.\
-            get_or_create(experiment=e, schema=key_schema)
-        ep, _ = ExperimentParameter.objects.get_or_create(parameterset=eps,
-            name=key_name,
-            string_value=key_value)
-        ep.save()
+        #eps, was_created = ExperimentParameterSet.objects.\
+        #    get_or_create(experiment=e, schema=key_schema)
+	#if was_created:
+        #    logger.warn("was created")
+        #ep, was_created = ExperimentParameter.objects.get_or_create(parameterset=eps,
+        #    name=key_name,
+        #    string_value=key_value)
+	#if was_created:
+        #    logger.warn("was created again")
+        #ep.save()
 
         if got_lock:
             release_lock()	
