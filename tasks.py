@@ -120,10 +120,24 @@ def transfer_experiment(source):
     #TODO: Cleanup error messages
     #NOTE: As this is a pull we trust the data from the other tardis
     # Check identity of the feed
-
     from oaipmh.client import Client
     from oaipmh import error
     from oaipmh.metadata import MetadataRegistry, oai_dc_reader
+
+    from django.core.cache import cache
+    from django.utils.hashcompat import md5_constructor as md5
+
+    # The cache key consists of the task name and the MD5 digest
+    # of the feed URL.
+    cache_key  = md5("token").hexdigest()
+    lock_id = "%s-lock-%s" % ("consume_experiment", cache_key)
+    LOCK_EXPIRE = 60*5
+    # cache.add fails if if the key already exists
+    acquire_lock = lambda: cache.add(lock_id, "true", LOCK_EXPIRE)
+    # memcache delete is very slow, but we have to use it to take
+    # advantage of using add() for atomic locking
+    release_lock = lambda: cache.delete(lock_id)
+
 
     registry = MetadataRegistry()
     registry.registerReader('oai_dc', oai_dc_reader)
@@ -261,20 +275,31 @@ def transfer_experiment(source):
 
         exps = Experiment.objects.all()
 
+	got_lock = True 
+        if not acquire_lock():
+	    logger.warning("another work has access to consume experiment") 
+            return
+	
+
         duplicate_exp = 0
         for exp in exps:
+            logger.warn("exp = %s" % exp.id)
             params = ExperimentParameter.objects.filter(name=key_name,
                                     parameterset__schema=key_schema,
                                     parameterset__experiment=exp)
+            logger.warn("params.count() = %s" % params.count())
             if params.count() >= 1:
                 key = params[0].string_value
                 if key == key_value:
                     duplicate_exp = exp.id
+                    logger.warn("found duplicate for %s" % duplicate_exp)
                     break
 
         if duplicate_exp:
             logger.warn("Found duplicate experiment form %s %s to %s"
                 % (source, exp_id, duplicate_exp))
+	    if got_lock: 
+                release_lock()
             return
 
 
@@ -294,6 +319,18 @@ def transfer_experiment(source):
             locked=False  # so experiment can then be altered.
             )
         e.save()
+
+        # store the key
+        eps, _ = ExperimentParameterSet.objects.\
+            get_or_create(experiment=e, schema=key_schema)
+        ep, _ = ExperimentParameter.objects.get_or_create(parameterset=eps,
+            name=key_name,
+            string_value=key_value)
+        ep.save()
+
+        if got_lock:
+            release_lock()	
+
         local_id = e.id
         filename = path.join(e.get_or_create_directory(),
                              'mets_upload.xml')
@@ -325,13 +362,6 @@ def transfer_experiment(source):
             datafile.stay_remote = True
             datafile.save()
 
-        # store the key
-        eps, _ = ExperimentParameterSet.objects.\
-            get_or_create(experiment=exp, schema=key_schema)
-        ep = ExperimentParameter(parameterset=eps,
-            name=key_name,
-            string_value=key_value)
-        ep.save()
 
 
         #import nose.tools
