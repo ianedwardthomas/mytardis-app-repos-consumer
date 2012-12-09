@@ -138,7 +138,6 @@ def transfer_experiment(source):
     # advantage of using add() for atomic locking
     release_lock = lambda: cache.delete(lock_id)
 
-
     registry = MetadataRegistry()
     registry.registerReader('oai_dc', oai_dc_reader)
     source_url = "%s/apps/oaipmh/?verb=Identify" % source
@@ -186,7 +185,6 @@ def transfer_experiment(source):
 
         found_user = _get_or_create_user(source, user)
 
-
         #make sure experiment is publicish
         try:
             xmldata = getURL("%s/apps/reposproducer/expstate/%s/"
@@ -230,7 +228,6 @@ def transfer_experiment(source):
                 # FIXME: skips all other types of acl for now
                 pass
 
-
         # Get the METS for the experiment
         metsxml = ""
         try:
@@ -243,8 +240,6 @@ def transfer_experiment(source):
             logger.error(e.read())
             logger.exception("cannot get METS for experiment %s" % exp_id)
             return
-
-
 
         # load schema and parametername for experiment keys
         try:
@@ -266,42 +261,49 @@ def transfer_experiment(source):
             logger.error(e.read())
             logger.exception("cannot get key of experiment %s" % exp_id)
             return
+        if not xmldata:
+            logger.warn("Unable to retrieve experiment %s key.  Will try again later" % exp_id)
+            return
+
         try:
             key_value = json.loads(xmldata)
         except ValueError as e:
             logger.error(e.read())
             logger.exception("cannot parse key list of experiment %s" % exp_id)
             return
+        if not key_value:
+            logger.warn("Unable to retrieve experiment %s key value.  Will try again later" % exp_id)
+            return
 
+
+        logger.warn("retrieved key %s from experiment %s" % (key_value, exp_id))
         exps = Experiment.objects.all()
 
-	got_lock = True 
+        got_lock = True
         if not acquire_lock():
-	    logger.warning("another work has access to consume experiment") 
+            logger.warning("another work has access to consume experiment")
             return
-	
 
         duplicate_exp = 0
         for exp in exps:
-            logger.warn("exp = %s" % exp.id)
+            #logger.warn("exp = %s" % exp.id)
             params = ExperimentParameter.objects.filter(name=key_name,
                                     parameterset__schema=key_schema,
                                     parameterset__experiment=exp)
-            logger.warn("params.count() = %s" % params.count())
+            #logger.warn("params.count() = %s" % params.count())
             if params.count() >= 1:
                 key = params[0].string_value
                 if key == key_value:
                     duplicate_exp = exp.id
-                    logger.warn("found duplicate for %s" % duplicate_exp)
+                    #logger.warn("found duplicate for %s" % duplicate_exp)
                     break
 
         if duplicate_exp:
-            logger.warn("Found duplicate experiment form %s %s to %s"
+            logger.warn("Found duplicate experiment form %s exp %s to  exp %s"
                 % (source, exp_id, duplicate_exp))
-	    if got_lock: 
+            if got_lock:
                 release_lock()
             return
-
 
         # TODO: Need someway of updating and existing experiment.  Problem is
         # that copy will have different id from original, so need unique identifier
@@ -323,17 +325,17 @@ def transfer_experiment(source):
         # store the key
         #eps, was_created = ExperimentParameterSet.objects.\
         #    get_or_create(experiment=e, schema=key_schema)
-	#if was_created:
+        #if was_created:
         #    logger.warn("was created")
         #ep, was_created = ExperimentParameter.objects.get_or_create(parameterset=eps,
         #    name=key_name,
         #    string_value=key_value)
-	#if was_created:
+        #if was_created:
         #    logger.warn("was created again")
         #ep.save()
 
         if got_lock:
-            release_lock()	
+            release_lock()
 
         local_id = e.id
         filename = path.join(e.get_or_create_directory(),
@@ -355,9 +357,7 @@ def transfer_experiment(source):
                 % local_id)
             return
 
-
         # FIXME: if METS parse fails then we should go back and delete the placeholder experiment
-
 
         exp = Experiment.objects.get(id=eid)
 
@@ -365,8 +365,6 @@ def transfer_experiment(source):
         for datafile in exp.get_datafiles():
             datafile.stay_remote = True
             datafile.save()
-
-
 
         #import nose.tools
         #nose.tools.set_trace()
