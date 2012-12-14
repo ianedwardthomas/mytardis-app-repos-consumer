@@ -59,7 +59,27 @@ from tardis.tardis_portal.auth.localdb_auth import django_user
 
 from django.core.urlresolvers import reverse
 
+
 logger = logging.getLogger(__name__)
+
+
+class ErrorBase(Exception):
+    pass
+
+
+class ReposReadError(ErrorBase):
+    """ We were unable to access the source site"""
+    pass
+
+
+class OAIPMHError(ErrorBase):
+    """ The OAIPMH access failed"""
+    pass
+
+
+class BadAccessError(ErrorBase):
+    """ We managed to access the source, but there is something wrong with what we got back"""
+    pass
 
 
 def getURL(source):
@@ -79,15 +99,15 @@ def _get_or_create_user(source, user_id):
         xmldata = getURL("%s/apps/reposproducer/user/%s/"
             % (source, user_id))
     except HTTPError as e:
-        logger.exception("error getting user information")
-        logger.error(e.read())
-        return None
+        msg = "error getting user information"
+        logger.error(msg)
+        raise
     try:
         user_profile = json.loads(xmldata)
     except ValueError as e:
-        logger.error(e.read())
-        logger.exception("cannot parse user information.")
-        return None
+        msg = "cannot parse user information."
+        logger.error(msg)
+        raise
     # NOTE: we assume that a person username is same across all nodes in BDP
     # FIXME: should new user have same id as original?
 
@@ -146,22 +166,24 @@ def transfer_experiment(source):
     try:
         identify = client.identify()
     except AttributeError as e:
-        logger.exception("error reading repos identity")
-        return
+        msg = "Error reading repos identity: %s" % (source, e)
+        logger.error(msg)
+        raise ReposReadError(msg)
     except error.ErrorBase as e:
-        logger.exception("OAIPMH.error")
-        return
+        msg = "OAIPMH error: %s" % e
+        logger.error(msg)
+        raise OAIPMHError(msg)
     except URLError as e:
-        logger.exception("url access error for %s" % source_url)
-        return
-
+        logger.error(e.msg)
+        raise
     repos = identify.baseURL()
     import urlparse
     repos_url = urlparse.urlparse(repos)
-    if "%s://%s" % (repos_url.scheme, repos_url.netloc) != source:
-        # In deployment, this should throw exception
-        logger.exception("Source directory reports incorrect name")
-        return
+    dest_name = "%s://%s" % (repos_url.scheme, repos_url.netloc)
+    if dest_name != source:
+        msg = "Source directory reports incorrect name: %s" % dest_name
+        logger.error(msg)
+        raise BadAccessError(msg)
     # Get list of public experiments at sources
     registry = MetadataRegistry()
     registry.registerReader('oai_dc', oai_dc_reader)
@@ -172,10 +194,12 @@ def transfer_experiment(source):
             for (header, meta, extra)
             in client.listRecords(metadataPrefix='oai_dc')]
     except AttributeError as e:
-        logger.exception("error reading experiment %s" % e)
-        return
+        msg = "Error reading experiment %e" % e
+        logger.error(msg)
+        raise OAIPMHError(msg)
     except error.NoRecordsMatchError as e:
-        logger.warn("no public records found %s" % e)
+        msg = "no public records found on source %s" % e
+        logger.warn(msg)
         return
 
     local_ids = []
@@ -190,19 +214,20 @@ def transfer_experiment(source):
             xmldata = getURL("%s/apps/reposproducer/expstate/%s/"
             % (source, exp_id))
         except HTTPError as e:
-            logger.error(e.read())
-            logger.exception("cannot get public state of experiment %s" % exp_id)
-            return
+            msg = "cannot get public state of experiment %s" % exp_id
+            logger.error(msg)
+            raise BadAccessError(msg)
         try:
             exp_state = json.loads(xmldata)
         except ValueError as e:
-            logger.error(e.read())
-            logger.exception("cannot parse public state of experiment %s" % exp_id)
-            return
+            msg = "cannot parse public state of experiment %s" % exp_id
+            logger.error(msg)
+            raise BadAccessError(msg)
         if not exp_state in [Experiment.PUBLIC_ACCESS_FULL,
                               Experiment.PUBLIC_ACCESS_METADATA]:
-            logger.error('=== processing experiment %s: FAILED!' % exp_id)
-            return
+            msg = 'cannot ingest private experiments.' % exp_id
+            logger.error(msg)
+            raise BadAccessError(msg)
 
         # Get the usernames of isOwner django_user ACLs for the experiment
         try:
@@ -210,15 +235,15 @@ def transfer_experiment(source):
             % (source, exp_id))
 
         except HTTPError as e:
-            logger.error(e.read())
-            logger.exception("cannot get acl list of experiment %s" % exp_id)
-            return
+            msg = "Cannot get acl list of experiment %s" % exp_id
+            logger.error(msg)
+            raise ReposReadError(msg)
         try:
             acls = json.loads(xmldata)
         except ValueError as e:
-            logger.error(e.read())
-            logger.exception("cannot parse acl list of experiment %s" % exp_id)
-            return
+            msg = "cannot parse acl list of experiment %s" % exp_id
+            logger.error(msg)
+            raise BadAccessError(msg)
         owners = []
         for acl in acls:
             if acl['pluginId'] == 'django_user' and acl['isOwner']:
@@ -237,30 +262,32 @@ def transfer_experiment(source):
             #% (source, exp_id))
 
         except HTTPError as e:
-            logger.error(e.read())
-            logger.exception("cannot get METS for experiment %s" % exp_id)
-            return
+            msg = "cannot get METS for experiment %s" % exp_id
+            logger.error(msg)
+            raise ReposReadError(msg)
 
         # load schema and parametername for experiment keys
         try:
             key_schema = Schema.objects.get(namespace=settings.KEY_NAMESPACE)
         except Schema.DoesNotExist as e:
-            logger.exception("No ExperimentKeyService Schema found")
-            return
+            msg = "No ExperimentKeyService Schema found"
+            logger.error(msg)
+            raise BadAccessError(msg)
 
         try:
             key_name = ParameterName.objects.get(name=settings.KEY_NAME)
         except ParameterName.DoesNotExist as e:
-            logger.exception("No ExperimentKeyService ParameterName found")
-            return
+            msg = "No ExperimentKeyService ParameterName found"
+            logger.error(msg)
+            raise BadAccessError(msg)
 
         try:
             xmldata = getURL("%s/apps/reposproducer/key/%s/"
             % (source, exp_id))
         except HTTPError as e:
-            logger.error(e.read())
-            logger.exception("cannot get key of experiment %s" % exp_id)
-            return
+            msg = "cannot get key of experiment %s" % exp_id
+            logger.error(msg)
+            raise BadAccessError(msg)
         if not xmldata:
             logger.warn("Unable to retrieve experiment %s key.  Will try again later" % exp_id)
             return
@@ -268,20 +295,20 @@ def transfer_experiment(source):
         try:
             key_value = json.loads(xmldata)
         except ValueError as e:
-            logger.error(e.read())
-            logger.exception("cannot parse key list of experiment %s" % exp_id)
-            return
+            msg = "cannot parse key list of experiment %s" % exp_id
+            logger.error(msg)
+            raise BadAccessError(msg)
         if not key_value:
             logger.warn("Unable to retrieve experiment %s key value.  Will try again later" % exp_id)
             return
 
 
-        logger.warn("retrieved key %s from experiment %s" % (key_value, exp_id))
+        logger.debug("retrieved key %s from experiment %s" % (key_value, exp_id))
         exps = Experiment.objects.all()
 
         got_lock = True
         if not acquire_lock():
-            logger.warning("another work has access to consume experiment")
+            logger.warning("another worker has access to consume experiment")
             return
 
         duplicate_exp = 0
@@ -353,9 +380,10 @@ def transfer_experiment(source):
                                                owners=owners)
             logger.info('=== processing experiment %s: DONE' % local_id)
         except:
-            logger.exception('=== processing experiment %s: FAILED!'
-                % local_id)
-            return
+            msg = '=== processing experiment %s: FAILED!' \
+                % local_id
+            logger.error(msg)
+            raise MetsParseError(msg)
 
         # FIXME: if METS parse fails then we should go back and delete the placeholder experiment
 

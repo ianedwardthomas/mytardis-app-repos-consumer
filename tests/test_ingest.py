@@ -33,10 +33,11 @@
 
 
 from os import path
+from django.conf import settings
 from django.contrib.auth.models import User
 from tardis.tardis_portal.models import UserProfile, ExperimentACL, Experiment
 
-from tardis.tardis_portal.models import License
+from tardis.tardis_portal.models import License, Schema, ParameterName
 
 
 def _create_test_data():
@@ -95,6 +96,8 @@ def _create_test_data():
                     canDelete=True,
                     aclOwnershipType=ExperimentACL.OWNER_OWNED)
     acl2.save()
+
+
     return (user1, user2, experiment)
 
 from flexmock import flexmock
@@ -170,6 +173,17 @@ class TransferExpTest(TestCase):
         flexmock(tasks).should_receive('get_audit_message') \
             .and_return("hello")
 
+        sch, _ = Schema.objects.\
+            get_or_create(namespace=settings.KEY_NAMESPACE,
+             name="Experiment Key")
+        pn, _ = ParameterName.objects.get_or_create(schema=sch, name=settings.KEY_NAME)
+        pn.save()
+
+        flexmock(tasks).should_receive('getURL').with_args(
+            "%s/apps/reposproducer/key/%s/" % (source, exp.id)) \
+           .and_return('"sdgfkhagkuashiuatihaghs7igtyweatihawtuhatjkhzsdg"')
+
+
     def test_correct_run(self):
         """
         This is an initial test of a basic consumption of service
@@ -208,9 +222,10 @@ class TransferExpTest(TestCase):
         #flexmock(Client).new_instances(fake)
 
         from tardis.apps.reposconsumer.tasks import transfer_experiment
+        from tardis.apps.reposconsumer.tasks import OAIPMHError
         try:
             transfer_experiment(source)
-        except IdDoesNotExistError:
+        except OAIPMHError:
             pass
         else:
-            self.AssertTrue(False, "Expected IdDoesNotExistError")
+            self.assertTrue(False, "Expected OAIPMHError")
