@@ -41,23 +41,14 @@ from django.conf import settings
 from os import path
 import logging
 import json
-
-from tardis.tardis_portal.models import Experiment, ExperimentACL, \
-     UserProfile, Schema, ParameterName, ExperimentParameter, \
-     ExperimentParameterSet
-
 from urllib2 import Request, urlopen, URLError, HTTPError
-
 from django.contrib.auth.models import User
-from tardis.tardis_portal.metsparser import parseMets
-
-
 from django.db import transaction
+from tardis.tardis_portal.models import Experiment, ExperimentACL, UserProfile, Schema, ParameterName, ExperimentParameter
+from tardis.tardis_portal.metsparser import parseMets
 from tardis.tardis_portal.ProcessExperiment import ProcessExperiment
 from tardis.tardis_portal.auth import auth_service
 from tardis.tardis_portal.auth.localdb_auth import django_user
-
-from django.core.urlresolvers import reverse
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +73,11 @@ class BadAccessError(ErrorBase):
     pass
 
 
+class MetsParseError(ErrorBase):
+    """ Something wrong in the parsing of the METS file"""
+    pass
+
+
 def getURL(source):
     request = Request(source, {}, {})
     response = urlopen(request)
@@ -98,13 +94,13 @@ def _get_or_create_user(source, user_id):
     try:
         xmldata = getURL("%s/apps/reposproducer/user/%s/"
             % (source, user_id))
-    except HTTPError as e:
+    except HTTPError:
         msg = "error getting user information"
         logger.error(msg)
         raise
     try:
         user_profile = json.loads(xmldata)
-    except ValueError as e:
+    except ValueError:
         msg = "cannot parse user information."
         logger.error(msg)
         raise
@@ -114,7 +110,7 @@ def _get_or_create_user(source, user_id):
     found_user = None
     try:
         found_user = User.objects.get(username=user_profile['username'])
-    except User.DoesNotExist as e:
+    except User.DoesNotExist:
         pass
     if not found_user:
         #FIXME: If there is a exception with readingfeeds, oaipmh from source,
@@ -149,9 +145,9 @@ def transfer_experiment(source):
 
     # The cache key consists of the task name and the MD5 digest
     # of the feed URL.
-    cache_key  = md5("token").hexdigest()
+    cache_key = md5("token").hexdigest()
     lock_id = "%s-lock-%s" % ("consume_experiment", cache_key)
-    LOCK_EXPIRE = 60*5
+    LOCK_EXPIRE = 60 * 5
     # cache.add fails if if the key already exists
     acquire_lock = lambda: cache.add(lock_id, "true", LOCK_EXPIRE)
     # memcache delete is very slow, but we have to use it to take
@@ -166,7 +162,7 @@ def transfer_experiment(source):
     try:
         identify = client.identify()
     except AttributeError as e:
-        msg = "Error reading repos identity: %s" % (source, e)
+        msg = "Error reading repos identity: %s:%s" % (source, e)
         logger.error(msg)
         raise ReposReadError(msg)
     except error.ErrorBase as e:
@@ -174,7 +170,7 @@ def transfer_experiment(source):
         logger.error(msg)
         raise OAIPMHError(msg)
     except URLError as e:
-        logger.error(e.msg)
+        logger.error(e)
         raise
     repos = identify.baseURL()
     import urlparse
@@ -194,7 +190,7 @@ def transfer_experiment(source):
             for (header, meta, extra)
             in client.listRecords(metadataPrefix='oai_dc')]
     except AttributeError as e:
-        msg = "Error reading experiment %e" % e
+        msg = "Error reading experiment %s" % e
         logger.error(msg)
         raise OAIPMHError(msg)
     except error.NoRecordsMatchError as e:
@@ -302,7 +298,6 @@ def transfer_experiment(source):
             logger.warn("Unable to retrieve experiment %s key value.  Will try again later" % exp_id)
             return
 
-
         logger.debug("retrieved key %s from experiment %s" % (key_value, exp_id))
         exps = Experiment.objects.all()
 
@@ -380,6 +375,7 @@ def transfer_experiment(source):
                                                owners=owners)
             logger.info('=== processing experiment %s: DONE' % local_id)
         except:
+            # FIXME: what errors can mets return?
             msg = '=== processing experiment %s: FAILED!' \
                 % local_id
             logger.error(msg)
