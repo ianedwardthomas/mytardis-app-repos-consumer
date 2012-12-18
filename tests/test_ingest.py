@@ -39,11 +39,13 @@ from django.test.client import Client
 from django.conf import settings
 from django.contrib.auth.models import User
 from oaipmh.client import Client as oaipmhclient
-from tardis.tardis_portal.models import UserProfile, ExperimentACL, Experiment
+from tardis.tardis_portal.models import UserProfile, ExperimentACL, Experiment, Author_Experiment
 from tardis.tardis_portal.models import License, Schema, ParameterName
 from tardis.apps.reposconsumer.tasks import OAIPMHError, ReposReadError, BadAccessError
 from tardis.apps.reposconsumer.tasks import MetsParseError
 from tardis.apps.reposconsumer import tasks
+from tardis.tardis_portal.auth.localdb_auth import django_user, django_group
+
 
 
 def _create_test_data():
@@ -168,7 +170,7 @@ class TransferExpTest(TestCase):
             .and_return(metsdata)
 
         flexmock(tasks).should_receive('get_audit_message') \
-            .and_return("hello")
+            .and_return(" audit message here")
 
         sch, _ = Schema.objects.\
             get_or_create(namespace=settings.KEY_NAMESPACE,
@@ -191,6 +193,22 @@ class TransferExpTest(TestCase):
         local_ids = transfer_experiment(source)
 
         #TODO: pull experiment at local_id and compare to original exp
+
+        user1 = User.objects.get(username="tom")
+        user2 = User.objects.get(username="joe")
+        print("local_ids=%s" % local_ids)
+        exp = Experiment.objects.get(id=local_ids[0])
+        self.assertEquals(exp.title, "test1")  # from METS file
+        self.assertEquals(exp.description, "this is the description audit message here")
+        self.assertEquals(exp.created_by.username, user1.username)
+        self.assertEquals(Author_Experiment.objects.filter(experiment=exp).count(), 2)
+        from tardis.tardis_portal.models import ExperimentACL
+        self.assertEquals(ExperimentACL.objects.filter(pluginId=django_user,
+                                   experiment__id=exp.id,
+                                   aclOwnershipType=ExperimentACL.OWNER_OWNED).count(), 2)
+
+
+
         self.assertTrue(len(local_ids) == 1)
         for local_id in local_ids:
             self.assertTrue(int(local_id) > 0)

@@ -134,6 +134,7 @@ def transfer_experiment(source):
     """
 
     #TODO: Cleanup error messages
+    #TODO: does not transfer liences as not part of METS format.
     #NOTE: As this is a pull we trust the data from the other tardis
     # Check identity of the feed
     from oaipmh.client import Client
